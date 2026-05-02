@@ -1,0 +1,360 @@
+<?php 
+session_start();
+include "db.php";
+include "functions.php";
+
+if (!isset($_SESSION['username'])) {
+    header("Location: index.php");
+    exit();
+}
+
+$message = "";
+$messageClass = "";
+
+// Get supplier ID from URL
+$supplier_id = isset($_GET['supplier_id']) ? intval($_GET['supplier_id']) : 0;
+$from_date = isset($_GET['from_date']) ? $_GET['from_date'] : date('Y-m-01');
+$to_date = isset($_GET['to_date']) ? $_GET['to_date'] : date('Y-m-d');
+
+// Fetch all suppliers for dropdown
+$suppliers = $conn->query("SELECT id, suppliers_name FROM suppliers ORDER BY suppliers_name");
+
+// Fetch supplier details if selected
+$supplier_name = "";
+if ($supplier_id > 0) {
+    $stmt = $conn->prepare("SELECT suppliers_name FROM suppliers WHERE id = ?");
+    $stmt->bind_param("i", $supplier_id);
+    $stmt->execute();
+    $result = $stmt->get_result();
+    if ($row = $result->fetch_assoc()) {
+        $supplier_name = $row['suppliers_name'];
+    }
+    $stmt->close();
+}
+
+// Fetch ledger entries
+$ledger_entries = [];
+
+if ($supplier_id > 0) {
+
+
+     
+
+    // Get purchase entries
+    $purchase_query = "SELECT p.date AS date,CONCAT('Purchase-',p.invoiceno) AS particulars,p.grand_total AS cr,NULL AS dr FROM purchase AS p WHERE supplier_id=$supplier_id AND p.date BETWEEN '$from_date' AND '$to_date' UNION ALL SELECT c.transaction_date AS date,'By Cash' AS particulars,NULL AS cr,ABS(c.amt) AS dr FROM cash_in_hand AS c  WHERE payee=$supplier_id AND c.transaction_date BETWEEN '$from_date' AND '$to_date'     UNION ALL SELECT b.transaction_date AS date,CONCAT('By Bank - ',bk.bank_name) AS particulars,NULL AS cr,ABS(b.amt) AS dr   FROM bank_ledger AS b JOIN bank AS bk ON bk.id = b.bank_id WHERE b.payee=$supplier_id AND b.transaction_date BETWEEN '$from_date' AND '$to_date' ORDER BY date  DESC;";
+    
+
+    $stmt = $conn->prepare($purchase_query);
+    $stmt->execute();
+    $purchases = $stmt->get_result();
+    // Get the count
+    $rowCount = $purchases->num_rows; 
+   
+
+    $sup_ledger=purchase($supplier_id);
+    $sup_payment=sup_payment($supplier_id);
+    $sup_outstanding=sup_outstanding($supplier_id);
+    
+    
+    
+}
+
+// Calculate totals
+$total_credit = 0;
+$total_debit = 0;
+
+
+// foreach($ledger_entries as $entry) {
+//     $total_credit += $entry['credit'];
+//     $total_debit += $entry['debit'];
+// }
+$balance_due = $total_credit - $total_debit;
+?>
+
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Supplier Ledger</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: #f4f6f8;
+            margin: 0;
+            padding: 0;
+        }
+
+        .container {
+            width: 95%;
+            margin: 40px auto;
+            background: #fff;
+            padding: 20px;
+            border-radius: 6px;
+            box-shadow: 0 0 10px rgba(0,0,0,0.1);
+        }
+
+        h1 {
+            text-align: center;
+            color: #333;
+            margin-bottom: 20px;
+        }
+
+        .filter-section {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: flex;
+            flex-wrap: wrap;
+            gap: 15px;
+            align-items: flex-end;
+        }
+
+        .filter-group {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .filter-group label {
+            display: block;
+            font-weight: bold;
+            color: #555;
+            margin-bottom: 5px;
+        }
+
+        .filter-group input, .filter-group select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+
+        .filter-group button {
+            padding: 8px 15px;
+            background: #007bff;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            width: 100%;
+        }
+
+        .filter-group button:hover {
+            background: #0056b3;
+        }
+
+        .supplier-info {
+            background: #e9ecef;
+            padding: 15px;
+            border-radius: 4px;
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: space-between;
+            font-weight: bold;
+        }
+
+        .summary-boxes {
+            display: flex;
+            gap: 20px;
+            margin-bottom: 20px;
+        }
+
+        .summary-box {
+            flex: 1;
+            padding: 15px;
+            border-radius: 4px;
+            text-align: center;
+            font-weight: bold;
+        }
+
+        .summary-box.total-bill {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .summary-box.total-payment {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .summary-box.balance-due {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+            font-size: 14px;
+        }
+
+        th, td {
+            padding: 12px 8px;
+            border: 1px solid #ddd;
+            text-align: left;
+        }
+
+        th {
+            background: #007bff;
+            color: white;
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background: #f9f9f9;
+        }
+
+        .credit {
+            color: #28a745;
+            font-weight: 500;
+        }
+
+        .debit {
+            color: #dc3545;
+            font-weight: 500;
+        }
+        
+        .balance {
+            font-weight: 600;
+            color: #333;
+        }
+        
+        .advance {
+            color: #17a2b8;
+            font-weight: 600;
+        }
+
+        .action-links {
+            margin-top: 20px;
+            display: flex;
+            gap: 10px;
+            justify-content: flex-end;
+        }
+
+        .action-links a {
+            padding: 8px 15px;
+            background: #28a745;
+            color: white;
+            text-decoration: none;
+            border-radius: 4px;
+        }
+
+        .action-links a:hover {
+            background: #218838;
+        }
+
+        .text-center {
+            text-align: center;
+        }
+        
+        .dash {
+            color: #999;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <?php include "dashboard.php"; ?>
+
+    <div class="container">
+        <h1>Supplier Ledger</h1>
+
+        <form method="GET" action="">
+            <div class="filter-section">
+                <div class="filter-group">
+                    <label>Select Supplier *</label>
+                    <select name="supplier_id" required>
+                        <option value="">-- Select Supplier --</option>
+                        <?php while($sup = $suppliers->fetch_assoc()): ?>
+                            <option value="<?php echo $sup['id']; ?>" <?php echo ($supplier_id == $sup['id']) ? 'selected' : ''; ?>>
+                                <?php echo htmlspecialchars($sup['suppliers_name']); ?>
+                            </option>
+                        <?php endwhile; ?>
+                    </select>
+                </div>
+
+                <div class="filter-group">
+                    <label>From Date</label>
+                    <input type="date" name="from_date" value="<?php echo $from_date; ?>" required>
+                </div>
+
+                <div class="filter-group">
+                    <label>To Date</label>
+                    <input type="date" name="to_date" value="<?php echo $to_date; ?>" required>
+                </div>
+
+                <div class="filter-group">
+                    <button type="submit">Show Ledger</button>
+                </div>
+            </div>
+        </form>
+
+        <?php if ($supplier_id > 0 && !empty($supplier_name)): ?>
+            <div class="supplier-info">
+                <span>Supplier: <?php echo htmlspecialchars($supplier_name); ?></span>
+                <span>Period: <?php echo date('d-m-Y', strtotime($from_date)); ?> to <?php echo date('d-m-Y', strtotime($to_date)); ?></span>
+            </div>
+
+            <!-- Summary Boxes -->
+            <div class="summary-boxes">
+                <div class="summary-box total-bill">
+                    Total Bill Amount: ₹<?php echo number_format(( !empty($sup_ledger['total']) ? $sup_ledger['total'] : 0), 2); ?>
+                </div>
+                <div class="summary-box total-payment">
+                    Total Payment: ₹<?php echo number_format(( !empty($sup_payment) ? $sup_payment : 0), 2); ?>
+                </div>
+                <div class="summary-box balance-due">
+                    Total Balance Due: ₹<?php echo number_format((!empty ($sup_outstanding) ? $sup_outstanding :0 ), 2); ?>
+                </div>
+            </div>
+
+            <table>
+                <thead>
+                    <tr>
+                        <th>Date</th>
+                        <th>Particulars</th>
+                        <th>Debit (₹)</th>
+                        <th>Credit (₹)</th>
+        
+                    </tr>
+                </thead>
+                <tbody>
+                    <?php 
+                    
+                        $running_balance = 0;
+                        $running_advance = 0;
+                        
+                        if($rowCount>0){
+                        
+                            while ($entry = $purchases->fetch_assoc()) {
+                                
+
+                                    
+                        
+                                // Generate particulars description
+                                $particulars = '';
+                                
+                                
+        
+                        ?>
+                            <tr>
+                            <td><?php echo $entry['date']; ?></td>
+                                <td><?php echo $entry['particulars']; ?></td>
+                                <td class="<?php echo ($entry['dr'] > 0) ? 'debit' : ''; ?>"><?php echo $entry['dr']; ?></td>
+                                <td class="<?php echo ($entry['cr'] > 0) ? 'credit' : ''; ?>"><?php echo $entry['cr']; ?></td>
+                            
+                            </tr>
+                        <?php }
+                    } else{ ?>
+                        <td colspan=4 style="text-align: center;"> No Records Found </td>
+                    <?php } ?>
+                </tbody>
+            </table>
+
+            <div class="action-links">
+                <a href="supplier_payment.php?supplier_id=<?php echo $supplier_id; ?>">Make Payment</a>
+            </div>
+        <?php endif; ?>
+    </div>
+</body>
+</html>
